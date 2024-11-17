@@ -14,6 +14,7 @@ from langchain.chains import RetrievalQA
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from huggingface_hub import hf_hub_download
 import time
+from datetime import datetime
 
 class BiologyTextbookRAG:
     def __init__(self, pdf_path: str, project_dir: str = "./biology_rag"):
@@ -102,17 +103,35 @@ class BiologyTextbookRAG:
         print(f"Extracted {len(self.sections)} sections from the textbook")
         return self.sections
 
-    def create_vectorstore(self) -> Chroma:
-        """Create a vector store from the extracted sections"""
-        print("Creating vector store...")
-        print(f"Vector store will be saved to: {self.vector_db_path}")
+    def create_vectorstore(self, force_refresh: bool = False) -> Chroma:
+        """
+        Create or load a vector store from the extracted sections
         
+        Args:
+            force_refresh: If True, recreate the vector store even if it exists
+        """
+        print(f"Vector store directory: {self.vector_db_path}")
+        
+        # Check if vector store exists
+        if not force_refresh and (self.vector_db_path / "chroma.sqlite3").exists():
+            print("Loading existing vector store...")
+            vectorstore = Chroma(
+                persist_directory=str(self.vector_db_path),
+                embedding_function=self.embeddings
+            )
+            print(f"Loaded existing vector store with {vectorstore._collection.count()} documents")
+            return vectorstore
+        
+        print("Creating new vector store...")
+        
+        # Create text splitter for chunking
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""],
         )
         
+        # Prepare documents with section metadata
         documents = []
         metadatas = []
         
@@ -121,6 +140,7 @@ class BiologyTextbookRAG:
             documents.extend(chunks)
             metadatas.extend([{"section": section_num} for _ in chunks])
         
+        # Create and return the vector store
         vectorstore = Chroma.from_texts(
             texts=documents,
             embedding=self.embeddings,
@@ -128,6 +148,7 @@ class BiologyTextbookRAG:
             persist_directory=str(self.vector_db_path)
         )
         
+        print(f"Created new vector store with {len(documents)} documents")
         return vectorstore
 
     def setup_qa_chain(self, vectorstore: Chroma) -> RetrievalQA:
@@ -144,7 +165,7 @@ class BiologyTextbookRAG:
             callbacks=callbacks,
             config={
                 'context_length': 2048,
-                'gpu_layers': 0  # Set to higher number if you have GPU
+                'gpu_layers': 14  # Set to higher number if you have GPU
             }
         )
         
@@ -200,7 +221,7 @@ class BiologyTextbookRAG:
         }
 
 def main():
-   # Start timing the total execution
+    # Start timing the total execution
     total_start = time.time()
     
     # Define project directory relative to current script
@@ -208,7 +229,7 @@ def main():
     project_dir = current_dir / "biology_rag"
     
     # Initialize the RAG pipeline
-    pdf_path = "/Users/gauthamkishore/DSC 190/biology2e_textbook.pdf"
+    pdf_path = "/Users/gauthamkishore/DSC190/biology2e_textbook.pdf"
     rag = BiologyTextbookRAG(
         pdf_path=pdf_path,
         project_dir=project_dir
@@ -216,13 +237,15 @@ def main():
     
     print("\nInitializing Biology Textbook RAG pipeline...")
     
-    # Extract sections
-    print("\nExtracting sections from PDF...")
-    sections = rag.extract_sections()
+    # Extract sections only if we need to create new embeddings
+    force_refresh_embeddings = False  # Set to True to force recreation of embeddings
+    if force_refresh_embeddings:
+        print("\nExtracting sections from PDF...")
+        sections = rag.extract_sections()
     
-    # Create vector store
-    print("\nCreating vector store...")
-    vectorstore = rag.create_vectorstore()
+    # Create or load vector store
+    print("\nSetting up vector store...")
+    vectorstore = rag.create_vectorstore(force_refresh=force_refresh_embeddings)
     
     # Setup QA chain
     print("\nSetting up QA chain...")
