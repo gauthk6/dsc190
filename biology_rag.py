@@ -51,6 +51,7 @@ class BiologyTextbookRAG:
         model_filename = "llama-2-7b-chat.Q4_K_M.gguf"
         local_model_path = self.models_dir / model_filename
 
+
         if local_model_path.exists():
             print(f"Using cached model from {local_model_path}")
             return str(local_model_path)
@@ -134,22 +135,32 @@ class BiologyTextbookRAG:
         # Prepare documents with section metadata
         documents = []
         metadatas = []
+        ids = []  # Add this for ChromaDB
+        doc_id = 0  # Counter for unique IDs
         
         for section_num, content in self.sections.items():
             chunks = text_splitter.split_text(content)
-            documents.extend(chunks)
-            metadatas.extend([{"section": section_num} for _ in chunks])
+            for chunk in chunks:
+                documents.append(chunk)
+                metadatas.append({"section": section_num})
+                ids.append(f"doc_{doc_id}")  # Add unique ID for each document
+                doc_id += 1
+        
+        print(f"Processing {len(documents)} chunks from {len(self.sections)} sections")
         
         # Create and return the vector store
         vectorstore = Chroma.from_texts(
             texts=documents,
             embedding=self.embeddings,
             metadatas=metadatas,
+            ids=ids,  # Add the IDs here
             persist_directory=str(self.vector_db_path)
         )
         
         print(f"Created new vector store with {len(documents)} documents")
+
         return vectorstore
+                
 
     def setup_qa_chain(self, vectorstore: Chroma) -> RetrievalQA:
         """Set up the question-answering chain"""
